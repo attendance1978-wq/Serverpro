@@ -1,5 +1,5 @@
 {
-  "name": "serverpro",
+  "name": "@attendance1978-wq/serverpro",
   "version": "1.2.0",
   "description": "Lightweight and fast Node.js framework for APIs and backend development",
   "main": "./src/index.js",

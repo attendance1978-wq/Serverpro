@@ -1,237 +1,266 @@
 import http from 'http';
 import os from 'os';
-import fs from 'fs';
-import path from 'path';
+import crypto from 'crypto';
 import { Router } from './router.js';
 
-const MIME_TYPES = {
-  '.html': 'text/html',
-  '.css': 'text/css',
-  '.js': 'application/javascript',
-  '.json': 'application/json',
-  '.png': 'image/png',
-  '.jpg': 'image/jpeg',
-  '.jpeg': 'image/jpeg',
-  '.gif': 'image/gif',
-  '.svg': 'image/svg+xml',
-  '.ico': 'image/x-icon',
-  '.txt': 'text/plain'
-};
-
-/**
- * Returns all local IPv4 addresses
- */
-export function getLocalIPs() {
-  const interfaces = os.networkInterfaces();
-  const ips = [];
-
-  for (const iface of Object.values(interfaces)) {
-    for (const config of iface || []) {
-      if (config.family === 'IPv4' && !config.internal) {
-        ips.push(config.address);
-      }
-    }
-  }
-
-  return ips;
-}
-
-/**
- * Create custom server
- */
 export function createServer(options = {}) {
+
   const router = new Router();
 
-  let staticFolder = null;
+  const middlewares = [];
 
   const server = http.createServer(async (req, res) => {
-    try {
-      // --------------------------
-      // RESPONSE HELPERS
-      // --------------------------
 
-      res.json = (data, status = 200) => {
-        res.writeHead(status, {
-          'Content-Type': 'application/json'
-        });
-        res.end(JSON.stringify(data, null, 2));
-      };
+    // --------------------------------------------------
+    // REQUEST META
+    // --------------------------------------------------
 
-      res.send = (body, status = 200) => {
-        res.writeHead(status, {
-          'Content-Type': 'text/plain'
-        });
-        res.end(String(body));
-      };
+    req.id = crypto.randomUUID();
+    req.time = Date.now();
+    req.ip =
+      req.headers['x-forwarded-for'] ||
+      req.socket.remoteAddress;
 
-      res.html = (body, status = 200) => {
-        res.writeHead(status, {
-          'Content-Type': 'text/html'
-        });
-        res.end(body);
-      };
+    // --------------------------------------------------
+    // RESPONSE HELPERS
+    // --------------------------------------------------
 
-      res.file = (filePath) => {
-        try {
-          const ext = path.extname(filePath);
-          const type = MIME_TYPES[ext] || 'application/octet-stream';
+    res.status = (code) => {
+      res.statusCode = code;
+      return res;
+    };
 
-          const data = fs.readFileSync(filePath);
+    res.json = (data) => {
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify(data, null, 2));
+    };
 
-          res.writeHead(200, {
-            'Content-Type': type
-          });
-
-          res.end(data);
-        } catch {
-          res.writeHead(404);
-          res.end('File not found');
-        }
-      };
-
-      // --------------------------
-      // REQUEST PARSING
-      // --------------------------
-
-      req.body = await parseBody(req);
-
-      const url = new URL(req.url, `http://${req.headers.host}`);
-
-      req.query = Object.fromEntries(url.searchParams);
-      req.pathname = url.pathname;
-
-      // --------------------------
-      // STATIC FILE SUPPORT
-      // --------------------------
-
-      if (staticFolder) {
-        let filePath = path.join(
-          staticFolder,
-          req.pathname === '/'
-            ? 'index.html'
-            : req.pathname
-        );
-
-        if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
-          return res.file(filePath);
-        }
+    res.send = (data) => {
+      if (typeof data === 'object') {
+        return res.json(data);
       }
 
-      // --------------------------
-      // ROUTER
-      // --------------------------
+      res.setHeader('Content-Type', 'text/plain');
+      res.end(String(data));
+    };
+
+    res.html = (html) => {
+      res.setHeader('Content-Type', 'text/html');
+      res.end(html);
+    };
+
+    res.redirect = (url, code = 302) => {
+      res.writeHead(code, {
+        Location: url
+      });
+      res.end();
+    };
+
+    res.error = (message = 'Server Error', code = 500) => {
+      res.status(code).json({
+        success: false,
+        error: message
+      });
+    };
+
+    // --------------------------------------------------
+    // REQUEST BODY
+    // --------------------------------------------------
+
+    req.body = await parseBody(req);
+
+    const url = new URL(req.url, `http://${req.headers.host}`);
+
+    req.query = Object.fromEntries(url.searchParams);
+    req.pathname = url.pathname;
+
+    // --------------------------------------------------
+    // LOGGER
+    // --------------------------------------------------
+
+    console.log(
+      `[${req.method}] ${req.pathname}`
+    );
+
+    // --------------------------------------------------
+    // MIDDLEWARE ENGINE
+    // --------------------------------------------------
+
+    let index = 0;
+
+    const next = async () => {
+      const middleware = middlewares[index++];
+
+      if (middleware) {
+        await middleware(req, res, next);
+      }
+    };
+
+    await next();
+
+    // --------------------------------------------------
+    // ROUTER
+    // --------------------------------------------------
+
+    try {
 
       const handled = await router.handle(req, res);
 
       if (!handled) {
-        res.json({
-          error: 'Not Found',
-          path: req.pathname
-        }, 404);
+        res.status(404).json({
+          success: false,
+          error: 'Route Not Found'
+        });
       }
 
     } catch (err) {
+
+      console.error(err);
+
       if (options.onError) {
         options.onError(err, req, res);
       } else {
-        console.error(err);
-
-        res.json({
-          error: 'Internal Server Error',
-          message: err.message
-        }, 500);
+        res.error(err.message);
       }
+
     }
+
   });
 
-  // --------------------------
-  // LISTEN OVERRIDE
-  // --------------------------
+  // --------------------------------------------------
+  // SERVER METHODS
+  // --------------------------------------------------
+
+  server.router = router;
+
+  server.use = (middleware) => {
+    middlewares.push(middleware);
+  };
+
+  server.get = (path, ...handlers) => {
+    router.add('GET', path, handlers);
+  };
+
+  server.post = (path, ...handlers) => {
+    router.add('POST', path, handlers);
+  };
+
+  server.put = (path, ...handlers) => {
+    router.add('PUT', path, handlers);
+  };
+
+  server.patch = (path, ...handlers) => {
+    router.add('PATCH', path, handlers);
+  };
+
+  server.delete = (path, ...handlers) => {
+    router.add('DELETE', path, handlers);
+  };
+
+  // --------------------------------------------------
+  // SERVER INFO
+  // --------------------------------------------------
+
+  server.info = () => ({
+    platform: os.platform(),
+    cpus: os.cpus().length,
+    memory: Math.round(os.totalmem() / 1024 / 1024),
+    uptime: process.uptime()
+  });
+
+  // --------------------------------------------------
+  // START SERVER
+  // --------------------------------------------------
 
   const originalListen = server.listen.bind(server);
 
-  server.listen = (port, ...args) => {
-    const cb = args.find(a => typeof a === 'function');
-    const rest = args.filter(a => typeof a !== 'function');
+  server.listen = (port, cb) => {
 
-    return originalListen(port, ...rest, () => {
+    return originalListen(port, () => {
+
       console.log('');
-      console.log('🚀 Server running');
+      console.log('🚀 CForge Server Started');
       console.log('');
 
-      console.log(`Local:   http://localhost:${port}`);
+      console.log(`Local: http://localhost:${port}`);
 
-      for (const ip of getLocalIPs()) {
-        console.log(`Network: http://${ip}:${port}`);
+      const interfaces = os.networkInterfaces();
+
+      for (const iface of Object.values(interfaces)) {
+
+        for (const config of iface || []) {
+
+          if (
+            config.family === 'IPv4' &&
+            !config.internal
+          ) {
+            console.log(
+              `Network: http://${config.address}:${port}`
+            );
+          }
+
+        }
+
       }
 
       console.log('');
 
       if (cb) cb();
+
     });
-  };
 
-  // --------------------------
-  // ROUTES
-  // --------------------------
-
-  server.router = router;
-
-  server.get = (path, ...handlers) =>
-    router.add('GET', path, handlers);
-
-  server.post = (path, ...handlers) =>
-    router.add('POST', path, handlers);
-
-  server.put = (path, ...handlers) =>
-    router.add('PUT', path, handlers);
-
-  server.delete = (path, ...handlers) =>
-    router.add('DELETE', path, handlers);
-
-  server.use = (path, ...handlers) =>
-    router.use(path, handlers);
-
-  // --------------------------
-  // STATIC WEB SUPPORT
-  // --------------------------
-
-  server.static = (folder) => {
-    staticFolder = path.resolve(folder);
   };
 
   return server;
 }
 
-/**
- * Parse request body
- */
+// --------------------------------------------------
+// BODY PARSER
+// --------------------------------------------------
+
 async function parseBody(req) {
+
   return new Promise((resolve) => {
+
     const chunks = [];
 
-    req.on('data', chunk => chunks.push(chunk));
+    req.on('data', chunk => {
+      chunks.push(chunk);
+    });
 
     req.on('end', () => {
-      const raw = Buffer.concat(chunks).toString();
+
+      const raw = Buffer
+        .concat(chunks)
+        .toString();
 
       if (!raw) {
         return resolve({});
       }
 
-      const contentType = req.headers['content-type'] || '';
+      const type =
+        req.headers['content-type'] || '';
 
-      if (contentType.includes('application/json')) {
-        try {
-          resolve(JSON.parse(raw));
-        } catch {
-          resolve({});
+      try {
+
+        if (type.includes('application/json')) {
+          return resolve(JSON.parse(raw));
         }
-      } else {
+
         resolve(raw);
+
+      } catch {
+
+        resolve({});
+
       }
+
     });
 
-    req.on('error', () => resolve({}));
+    req.on('error', () => {
+      resolve({});
+    });
+
   });
+
 }

@@ -1,0 +1,72 @@
+{
+  "name": "serverpro",
+  "version": "1.2.0",
+  "description": "Lightweight and fast Node.js framework for APIs and backend development",
+  "main": "./src/index.js",
+  "type": "module",
+
+  "exports": {
+    ".": "./src/index.js",
+    "./server": "./src/server.js",
+    "./router": "./src/router.js"
+  },
+
+  "bin": {
+    "serverpro": "./src/index.js"
+  },
+
+  "files": [
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "test": "node tests/server.test.js",
+    "check": "node --check src/index.js",
+    "lint": "node --check src/*.js",
+    "clean": "rm -rf node_modules package-lock.json",
+    "prepare": "npm run check"
+  },
+
+  "keywords": [
+    "server",
+    "http",
+    "https",
+    "nodejs",
+    "framework",
+    "backend",
+    "router",
+    "middleware",
+    "api",
+    "rest",
+    "lightweight",
+    "fast",
+    "webserver"
+  ],
+
+  "author": "attendance1978-wq",
+
+  "license": "MIT",
+
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/attendance1978-wq/Serverpro.git"
+  },
+
+  "homepage": "https://github.com/attendance1978-wq/Serverpro",
+
+  "bugs": {
+    "url": "https://github.com/attendance1978-wq/Serverpro/issues"
+  },
+
+  "engines": {
+    "node": ">=18.0.0"
+  },
+
+  "publishConfig": {
+    "access": "public"
+  }
+}

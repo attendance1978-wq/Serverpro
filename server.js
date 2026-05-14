@@ -174,9 +174,15 @@ export function createServer(options = {}) {
 
   const originalListen = server.listen.bind(server);
 
-  server.listen = (port, cb) => {
+  server.listen = (port, host, cb) => {
 
-    return originalListen(port, () => {
+    // Handle optional host parameter
+    if (typeof host === 'function') {
+      cb = host;
+      host = '0.0.0.0';
+    }
+
+    return originalListen(port, host, () => {
 
       console.log('');
       console.log('🚀 CForge Server Started');
